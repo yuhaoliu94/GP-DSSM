@@ -1,10 +1,10 @@
 # README
 
-Deep Gaussian Process State Space Model. The current version only supports the continuous observation processes.
+Gaussian Process-based Deep State-Space Model. The current version only supports the continuous observation processes.
 
 ## FLAGS
 
-The code implements particle filterng for Deep Gaussian Process Stage Space Models (DGPSSMs) approximated using random Fourier features. The code accepts the following options:
+The code implements particle filterng for Gaussian Process-based State-Space Models (GP-DSSMs) approximated using random Fourier features. The code accepts the following options:
 
 
 * --nl                  &emsp; &emsp; &emsp; &emsp; &emsp; &emsp; &nbsp; Number of layers, including the observatioin layer
