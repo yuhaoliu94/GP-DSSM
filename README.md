@@ -20,7 +20,7 @@ The case 4 shows a one-hidden-layer example with feed-forward control input, whe
 There are other cases not implemented in the notebook but are easy to construct. Users can customize their models in `models.py`.
 
 1. We can construct a multiple-hidden-layer SSM where the hidden-layer also has transitions:
-![](https://github.com/yuhaoliu94/GP-DSSM/blob/main/notebook/README/case6.png?raw=true)
+![](https://github.com/yuhaoliu94/GP-DSSM/blob/main/notebook/README/case5.png?raw=true)
 
 2. We can construct a multiple-hidden-layer SSM where the hidden-layer does not have transitions:
 ![](https://github.com/yuhaoliu94/GP-DSSM/blob/main/notebook/README/case6.png?raw=true)
