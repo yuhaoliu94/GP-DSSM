@@ -1,11 +1,11 @@
+from abc import ABC
+from copy import deepcopy
+from time import time
+
 import numpy as np
 
-from abc import ABC
-from time import time
-from copy import deepcopy
-from src.gpdssm.functions import RandomFeatureGP
+from src.gpdssm.layers import HiddenTransitLayer, RootTransitLayer, ObservationLayer, RootTransitInputLayer
 from src.gpdssm.utils import import_dataset, get_mse, get_mnll, get_svd_representation_list
-from src.gpdssm.layers import HiddenTransitLayer, RootTransitLayer, ObservationLayer, HiddenNonTransitLayer
 
 
 class StandardSingleModel(ABC):
@@ -189,3 +189,46 @@ class StandardSingleModel(ABC):
 
         return {"actual_svd_representation": actual_svd_representation,
                 "estimated_svd_representation": estimated_svd_representation}
+
+
+class InputSingleModel(StandardSingleModel):
+    def initialize_structure(self, retrain=False):
+
+        if retrain:
+            self.save_current_layers()
+
+        constant_param = (self.M, self.J, self.warm_start, self.learning_rate)
+
+        self.hidden_layers = [RootTransitInputLayer(self.dim_hidden[0], *constant_param, self.data.Du)]
+        self.hidden_layers += self.construct_hidden_layers(constant_param)
+        self.observation_layer = ObservationLayer(self.dim_all[-1], *constant_param)
+        self.layers = self.hidden_layers + [self.observation_layer]
+
+        for i in range(self.num_all_layer - 1):
+            self.layers[i].next_layer = self.layers[i + 1]
+
+        for i in range(1, self.num_all_layer):
+            self.layers[i].prev_layer = self.layers[i - 1]
+
+        if not retrain:
+            for i in range(self.num_all_layer):
+                self.layers[i].initialize_transition_function()
+                self.functions.append(self.layers[i].function)
+        else:
+            for i in range(self.num_all_layer):
+                self.layers[i].initialize_transition_function()
+                self.layers[i].function = self.functions[i]
+
+    def predict(self):
+        u = self.data.U[self.t, :]
+        self.layers[0].predict(u)
+        for i in range(1, self.num_all_layer):
+            self.layers[i].predict()
+
+    def update(self):
+        u = self.data.U[self.t, :]
+        self.layers[0].update(u)
+        for i in range(1, self.num_all_layer):
+            self.layers[i].update()
+
+        self.t += 1

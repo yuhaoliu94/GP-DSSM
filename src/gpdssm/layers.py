@@ -11,12 +11,12 @@ from src.gpdssm.distributions import Normal
 class Layer(ABC):
 
     def __init__(self, dim: int, num_particle: int = 1000, num_rff: int = 50,
-                 warm_start: int = 0, learning_rate: float = 0.001) -> None:
+                 warm_start: int = 0, learning_rate: float = 0.001, din: int = None) -> None:
         # assign after initializing structure
         self.next_layer = None
         self.prev_layer = None
 
-        self.din = None
+        self.din = din
         self.function = None
 
         # scalar
@@ -166,6 +166,57 @@ class RootTransitLayer(TransitLayer):
         self.t += 1
 
 
+class HiddenTransitInputLayer(HiddenTransitLayer):
+
+    def initialize_transition_function(self) -> None:
+        self.din += self.dim + self.prev_layer.dim
+        self.function = RandomFeatureGP(self.din, self.dout, self.J, self.warm_start, self.learning_rate)
+
+    def get_input_particles(self, u: np.ndarray = None) -> np.ndarray:
+        replicate_u = np.repeat(u[np.newaxis, :], self.M, axis=0)  # M * Du
+        input_particles = np.concatenate(
+            (replicate_u, self.current_particle_state, self.prev_layer.current_particle_state), axis=1)
+
+        return input_particles
+
+    def predict(self, u: np.ndarray = None) -> None:
+        predict_particle = self.function.predict(self.get_input_particles(u))
+        self.prev_particle_state = deepcopy(self.current_particle_state)
+        self.current_particle_state = predict_particle
+
+    def update(self, u: np.ndarray = None) -> None:
+        prev_state = self.stored_states[-2]
+        prev_layer_current_state = self.prev_layer.current_state
+        input_vector = np.concatenate((u, prev_state, prev_layer_current_state))
+        self.function.update(input_vector, self.current_state)
+
+        self.t += 1
+
+
+class RootTransitInputLayer(RootTransitLayer):
+
+    def initialize_transition_function(self) -> None:
+        self.din += self.dim
+        self.function = RandomFeatureGP(self.din, self.dout, self.J, self.warm_start, self.learning_rate)
+
+    def get_input_particles(self, u: np.ndarray = None) -> np.ndarray:
+        replicate_u = np.repeat(u[np.newaxis, :], self.M, axis=0)  # M * Du
+        input_particles = np.concatenate((replicate_u, self.current_particle_state), axis=1)
+        return input_particles
+
+    def predict(self, u: np.ndarray = None) -> None:
+        predict_particle = self.function.predict(self.get_input_particles(u))
+        self.prev_particle_state = deepcopy(self.current_particle_state)
+        self.current_particle_state = predict_particle
+
+    def update(self, u: np.ndarray = None) -> None:
+        prev_state = self.stored_states[-2]
+        ensemble_input = np.concatenate((u, prev_state))
+        self.function.update(ensemble_input, self.current_state)
+
+        self.t += 1
+
+
 # Non Transit Layer
 class NonTransitLayer(Layer):
     def __init__(self, *args):
@@ -219,6 +270,28 @@ class HiddenNonTransitLayer(NonTransitLayer):
         self.t += 1
 
 
+class HiddenNonTransitInputLayer(HiddenNonTransitLayer):
+
+    def initialize_transition_function(self):
+        self.din += self.prev_layer.dim
+        self.function = RandomFeatureGP(self.din, self.dout, self.J, self.warm_start, self.learning_rate)
+
+    def get_input_particles(self, u: np.ndarray = None) -> np.ndarray:
+        replicate_u = np.repeat(u[np.newaxis, :], self.M, axis=0)  # M * Du
+        input_particles = np.concatenate((replicate_u, self.prev_layer.current_particle_state), axis=1)
+        return input_particles
+
+    def predict(self, u: np.ndarray = None) -> None:
+        predict_particle = self.function.predict(self.get_input_particles(u))
+        self.current_particle_state = predict_particle
+
+    def update(self, u: np.ndarray = None) -> None:
+        ensemble_input = np.concatenate((u, self.prev_layer.current_state))
+        self.function.update(ensemble_input, self.current_state)
+
+        self.t += 1
+
+
 class ObservationLayer(NonTransitLayer):
 
     def __init__(self, *args) -> None:
@@ -257,6 +330,55 @@ class ObservationLayer(NonTransitLayer):
 
     def update(self) -> None:
         self.function.update(self.prev_layer.current_state, self.y)
+
+        self.t += 1
+
+        # log_likelihood
+        cum_log_likelihood = self.function.cal_y_log_likelihood()
+        self.y_log_likelihood = cum_log_likelihood - np.sum(self.stored_y_log_likelihood)  # np.average(log_likelihood)
+        self.stored_y_log_likelihood.append(self.y_log_likelihood)
+
+        # mse
+        self.mse = get_sequential_mse(self.mse, self.t - 1, self.y, self.current_state)
+
+        # mnll
+        self.mnll = get_sequential_mnll(self.mnll, self.t - 1, self.y_log_likelihood_forward)
+
+
+class ObservationInputLayer(ObservationLayer):
+
+    def initialize_transition_function(self):
+        self.din += self.prev_layer.dim
+        self.function = RandomFeatureGP(self.din, self.dout, self.J, self.warm_start, self.learning_rate)
+
+    def get_input_particles(self, u: np.ndarray = None) -> np.ndarray:
+        replicate_u = np.repeat(u[np.newaxis, :], self.M, axis=0)  # M * Du
+        input_particles = np.concatenate((replicate_u, self.prev_layer.current_particle_state), axis=1)
+        return input_particles
+
+    def predict(self, u: np.ndarray = None) -> None:
+        self.current_particle_state = self.function.predict(self.get_input_particles(u))
+        self.current_state = np.average(self.current_particle_state, axis=0)
+        self.stored_states.append(deepcopy(self.current_state))
+
+    def filter(self, y, u: np.ndarray = None) -> None:
+        self.y = y
+        # self.stored_y.append(y)
+
+        replicate_actual_realization = np.repeat(y[np.newaxis, :], self.M, axis=0)  # M * dim
+        log_likelihood = self.function.cal_log_likelihood(replicate_actual_realization)  # M
+
+        self.particle_weights_for_prev_layer = normalize_weights(log_likelihood)
+
+        prev_input_vector = np.average(self.prev_layer.current_particle_state, axis=0)
+        input_vector = np.concatenate((u, prev_input_vector))
+        cum_log_likelihood_forward = self.function.cal_y_log_likelihood_forward(input_vector, y)
+        self.y_log_likelihood_forward = cum_log_likelihood_forward - np.sum(self.stored_y_log_likelihood_forward)
+        self.stored_y_log_likelihood_forward.append(self.y_log_likelihood_forward)
+
+    def update(self, u: np.ndarray = None) -> None:
+        ensemble_input = np.concatenate((u, self.prev_layer.current_state))
+        self.function.update(ensemble_input, self.y)
 
         self.t += 1
 
