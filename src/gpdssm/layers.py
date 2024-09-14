@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 
 from src.gpdssm.utils import get_random_state, normalize_weights, get_sequential_mse, get_sequential_mnll
-from src.gpdssm.functions import RandomFeatureGP
+from src.gpdssm.functions import RandomFeatureGP, Sigmoid
 from src.gpdssm.distributions import Normal
 
 
@@ -392,3 +392,10 @@ class ObservationInputLayer(ObservationLayer):
 
         # mnll
         self.mnll = get_sequential_mnll(self.mnll, self.t - 1, self.y_log_likelihood_forward)
+
+
+class ObservationBinaryLayer(ObservationLayer):
+
+    def initialize_transition_function(self):
+        self.din = self.dim
+        self.function = Sigmoid(self.din, self.dout, self.warm_start, self.learning_rate)

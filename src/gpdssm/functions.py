@@ -4,7 +4,7 @@ from abc import ABC
 
 from src.gpdssm.utils import symmetric_mult
 from src.gpdssm.optimizers import AdamSGD
-from src.gpdssm.likelihoods import NormalLikelihood, MarginalLikelihood
+from src.gpdssm.likelihoods import NormalLikelihood, MarginalLikelihood, BinaryLikelihood
 from src.gpdssm.distributions import InverseGamma, Normal
 
 
@@ -146,3 +146,75 @@ class RandomFeatureGP(Function):
         marginal_dist = MarginalLikelihood(self.t + 1, det_Lambda, self.a0, a, self.b0, b)
         log_likelihood = marginal_dist.get_loglikelihood()
         return np.sum(log_likelihood)
+
+
+class Sigmoid(Function):
+    def __init__(self, din: int, dout: int, warm_start: int, learning_rate: float) -> None:
+        super().__init__()
+
+        # int scalar
+        self.din = din
+        self.dout = dout
+
+        assert self.dout == self.din, "The dimension for Sigmoid is wrong."
+        self.warm_start = warm_start
+        self.learning_rate = learning_rate
+
+        self.alpha = np.zeros(self.dout)
+        self.beta = -np.ones(self.dout)
+
+        self.optimizer_alpha = AdamSGD((self.dout,), learning_rate=self.learning_rate)
+        self.optimizer_beta = AdamSGD((self.dout,), learning_rate=self.learning_rate)
+
+        self.predict_dist = None
+
+        self.y_log_likelihood = []
+
+    def get_sigmoid(self, input_array: np.ndarray):
+        output_array = 1 / (1 + np.exp(self.alpha + self.beta * input_array))
+
+        return output_array
+
+    def cal_grad(self, input_vector: np.ndarray, output_vector: np.ndarray) -> (np.ndarray, np.ndarray):
+        """Dy, Dy -> Dy"""
+        sigmoid = self.get_sigmoid(input_vector)
+        part1 = 0. - output_vector * (1. - sigmoid)
+        part2 = (1. - output_vector) * sigmoid
+        grad_alpha = - (part1 + part2)
+        grad_beta = grad_alpha * input_vector
+
+        return grad_alpha, grad_beta
+
+    def predict(self, input_particles: np.ndarray) -> np.ndarray:
+        """M * Dy --> M * Dy"""
+        output_particles = self.get_sigmoid(input_particles)
+
+        self.predict_dist = output_particles
+        return output_particles
+
+    def update(self, input_vector: np.ndarray, output_vector: np.ndarray) -> None:
+        """Dy, Dy"""
+        if self.t >= self.warm_start:
+            grad_alpha, grad_beta = self.cal_grad(input_vector, output_vector)
+            self.alpha = self.optimizer_alpha.next_iteration(self.alpha, grad_alpha)
+            self.beta = self.optimizer_beta.next_iteration(self.beta, grad_beta)
+
+        self.t += 1
+
+    def cal_log_likelihood(self, y: np.ndarray):
+        """M * Dy"""
+        marginal_dist = BinaryLikelihood(y, self.predict_dist)
+        log_likelihood = marginal_dist.get_loglikelihood()
+        cumdim_log_likelihood = np.sum(log_likelihood, axis=1)
+        self.y_log_likelihood.append(np.average(cumdim_log_likelihood))
+        return cumdim_log_likelihood
+
+    def cal_y_log_likelihood(self) -> float:
+        return np.sum(self.y_log_likelihood)
+
+    def cal_y_log_likelihood_forward(self, input_vector: np.ndarray, output_vector: np.ndarray) -> float:
+        output_vector_hat = self.get_sigmoid(input_vector)
+        marginal_dist = BinaryLikelihood(output_vector, output_vector_hat)
+        log_likelihood = marginal_dist.get_loglikelihood()
+        cumdim_log_likelihood = np.sum(log_likelihood)
+        return cumdim_log_likelihood + np.sum(self.y_log_likelihood[:-1])

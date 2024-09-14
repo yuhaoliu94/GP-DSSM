@@ -17,14 +17,12 @@ def import_dataset(data_name: str, data_fold: int) -> DataSet:
     Y_path = os.path.join(cwd, "folds", "%s_fold_%s_Y.txt" % (data_name, data_fold))
     Y = np.loadtxt(Y_path, delimiter=' ')
 
-    if Y.ndim == 1:
-        Y = np.reshape(Y, (-1, 1))
-
     X_path = os.path.join(cwd, "folds", "%s_fold_%s_X.pickle" % (data_name, data_fold))
     U_path = os.path.join(cwd, "folds", "%s_fold_%s_U.txt" % (data_name, data_fold))
     if os.path.exists(X_path):
         with open(X_path, 'rb') as f:
             X = pickle.load(f)
+
         if os.path.exists(U_path):
             U = np.loadtxt(U_path, delimiter=' ')
             data = DataSet(data_name, data_fold, Y, X, U)

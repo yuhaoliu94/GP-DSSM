@@ -7,6 +7,8 @@ import numpy as np
 from src.gpdssm.layers import HiddenTransitLayer, RootTransitLayer, ObservationLayer
 from src.gpdssm.layers import RootTransitInputLayer, HiddenTransitInputLayer, ObservationInputLayer
 from src.gpdssm.layers import HiddenNonTransitInputLayer
+from src.gpdssm.layers import ObservationBinaryLayer
+
 from src.gpdssm.utils import import_dataset, get_mse, get_mnll, get_svd_representation_list
 
 
@@ -255,3 +257,29 @@ class InputFeedForwardSingleModel(InputSingleModel):
             self.layers[i].update(u)
 
         self.t += 1
+
+
+class BinarySingleModel(StandardSingleModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # layers
+        assert len(self.dim_all) >= 2, "There must be at least one hidden layer for classification."
+        assert self.dim_all[-2] == self.dim_all[-1], "The last hidden layer must have the dimension of Dy."
+
+    def customize_layers(self, constant_param):
+        self.hidden_layers += [RootTransitLayer(self.dim_hidden[0], *constant_param, self.data.Du)]
+        self.hidden_layers += self.construct_hidden_layers(constant_param)
+        self.observation_layer = ObservationBinaryLayer(self.dim_all[-1], *constant_param)
+        self.layers = self.hidden_layers + [self.observation_layer]
+
+    def construct_hidden_layers(self, constant_param):
+        middle_layers = [HiddenTransitLayer(self.dim_hidden[i], *constant_param)
+                         for i in range(1, self.num_hidden_layer)]
+        return middle_layers
+
+    def get_predictions_binary(self) -> np.ndarray:
+        probabilities = np.array(self.observation_layer.stored_states)
+        binary_predictions = np.round(probabilities)
+
+        return binary_predictions

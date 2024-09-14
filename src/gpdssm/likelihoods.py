@@ -47,3 +47,16 @@ class NormalLikelihood(Likelihood):
         log_likelihood *= -0.5
 
         return log_likelihood
+
+
+class BinaryLikelihood(Likelihood):
+    def __init__(self, y: np.ndarray, y_pred: np.ndarray):
+        super().__init__()
+
+        self.y = y
+        self.y_pred = np.minimum(np.maximum(y_pred, 1e-8), 1. - 1e-8)
+
+    def get_loglikelihood(self) -> np.ndarray:
+        log_likelihood = self.y * np.log(self.y_pred) + (1 - self.y) * np.log(1 - self.y_pred)
+
+        return log_likelihood
